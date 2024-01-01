@@ -4,6 +4,7 @@ use std::error::Error;
 use std::collections::HashMap;
 use std::fmt;
 use std::os::unix::process;
+use std::os::unix::process::CommandExt;
 
 #[derive(Debug)]
 struct GeneralError;
@@ -86,24 +87,23 @@ fn main_loop(config: Config) -> i32 {
             .expect("Failed to read line");
 
 
-        println!("{}", line);
         let line = String::from(line.trim_end());
+        
+        if line.trim() == "" {
+            continue;
+        }
         
         let parsed_command = parse_command(&line);
         
         if config.rsh_builtins.get(&parsed_command[0]) != None {
-            if parsed_command.len() > 1 {
-                (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec()).unwrap();
-            }
-
-            else {
-                let v: Vec<String> = Vec::new();
-                (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&v).unwrap();
-            }
+            (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec()).unwrap();
         }
 
         else {
-            
+            let mut command = Command::new(&parsed_command[0]);
+            command.args(&parsed_command[1..]);
+            let mut child = command.spawn().expect("Failed to spawn subshell");
+            status = child.wait().expect("Failed to wait child process to finish").code().unwrap();
         }
     }
 
@@ -116,11 +116,4 @@ fn main() -> Result<(), String> {
     println!("hello world!");
     let status = main_loop(cfg);
     std::process::exit(status);
-
-    
-    let output = Command::new("ls").args(&["-l"]).output().unwrap();
-
-    println!("status: {}", output.status);
-    println!("stdout: {}", String::from_utf8(output.stdout).unwrap());
-    println!("stdout: {}", String::from_utf8(output.stderr).unwrap());
 }
