@@ -5,27 +5,24 @@ use std::collections::HashMap;
 use std::fmt;
 use std::os::unix::process;
 use std::os::unix::process::CommandExt;
+use std::env;
 
-#[derive(Debug)]
-struct GeneralError;
-
-impl Error for GeneralError {}
-
-impl fmt::Display for GeneralError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Error")
+fn cd_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
+    let help_msg = String::from("Usage:\n\ncd [new directory]\n");
+    if argv.len() != 1 {
+        println!("{}", help_msg);
     }
-}
-
-fn cd_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
+    
+    env::set_current_dir(&argv[0]).expect("Failed to change directory");
     Ok((1, 0))
 }
 
-fn help_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
+fn help_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
+    println!("Builtins:\n\nhelp - prints this help message\ncd - changes directory\nexit - exits the program with specified return code\n");
     Ok((1, 0))
 }
 
-fn exit_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
+fn exit_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
     let help_msg = "Usage:\n\nexit [status code]\n";
     if argv.len() > 1 {
         println!("{}", help_msg);
@@ -53,25 +50,39 @@ fn exit_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
 
 struct Config {
     ps1: String,
-    rsh_builtins: HashMap<String, fn(&Vec<String>) -> Result<(i32, i32), GeneralError>>
+    rsh_builtins: HashMap<String, fn(&Vec<String>) -> Result<(i32, i32), String>>,
+    variables: HashMap<String, String>
 }
 
 
-fn load_config() -> Result<Config, GeneralError> {
+fn load_config() -> Result<Config, String> {
     let mut loc_config = Config {
         ps1: String::from("> "),
-        rsh_builtins: HashMap::new()
+        rsh_builtins: HashMap::new(),
+        variables: HashMap::new()
     };
     
     loc_config.rsh_builtins.insert(String::from("help"), help_builtin);
     loc_config.rsh_builtins.insert(String::from("cd"), cd_builtin);
     loc_config.rsh_builtins.insert(String::from("exit"), exit_builtin);
+
+    loc_config.variables.insert(String::from("?"), String::from("0"));
+    
     
     Ok(loc_config)
 }
 
-fn parse_command(s: &String) -> Vec<String> {
-    s.split(" ").map(|word| word.to_string()).collect()
+fn parse_command(s: &String, config: &Config) -> Vec<String> {
+    let mut split_string: Vec<String> = s.split(" ").map(|word| word.to_string()).collect();
+    for s in split_string.iter_mut() {
+        if s.starts_with('$') {
+            let var_name = &s[1..];
+            let val = config.variables.get(var_name).unwrap();
+            *s = val.to_string();
+        }
+    }
+
+    split_string
 }
 
 fn main_loop(config: Config) -> i32 {
@@ -93,7 +104,7 @@ fn main_loop(config: Config) -> i32 {
             continue;
         }
         
-        let parsed_command = parse_command(&line);
+        let parsed_command = parse_command(&line, &config);
         
         if config.rsh_builtins.get(&parsed_command[0]) != None {
             (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec()).unwrap();
@@ -102,8 +113,17 @@ fn main_loop(config: Config) -> i32 {
         else {
             let mut command = Command::new(&parsed_command[0]);
             command.args(&parsed_command[1..]);
-            let mut child = command.spawn().expect("Failed to spawn subshell");
-            status = child.wait().expect("Failed to wait child process to finish").code().unwrap();
+            let mut child = command.spawn();
+            match child {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("Error: {}\n", e);
+                    continue;
+                }
+                    
+            };
+            
+            status = child.unwrap().wait().expect("Failed to wait child process to finish").code().unwrap();
         }
     }
 
@@ -115,5 +135,6 @@ fn main() -> Result<(), String> {
     
     println!("hello world!");
     let status = main_loop(cfg);
+    
     std::process::exit(status);
 }
