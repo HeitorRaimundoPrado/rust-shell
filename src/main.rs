@@ -16,22 +16,43 @@ impl fmt::Display for GeneralError {
     }
 }
 
-fn cd_builtin() -> Result<(i32, i32), GeneralError> {
+fn cd_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
     Ok((1, 0))
 }
 
-fn help_builtin() -> Result<(i32, i32), GeneralError> {
+fn help_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
     Ok((1, 0))
 }
 
-fn exit_builtin() -> Result<(i32, i32), GeneralError> {
-    println!("exit works");
-    Ok((0, 0))
+fn exit_builtin(argv: &Vec<String>) -> Result<(i32, i32), GeneralError> {
+    let help_msg = "Usage:\n\nexit [status code]\n";
+    if argv.len() > 1 {
+        println!("{}", help_msg);
+        return Ok((1, 1));
+    }
+    
+    let mut status_code = 0;
+
+    if argv.len() > 0 {
+        let parse_argv = argv[0].parse::<i32>();
+        match parse_argv {
+            Ok(parse_argv) => {
+                status_code = parse_argv;
+            },
+            
+            Err(e) => {
+                println!("{}", help_msg);
+                return Ok((1, 1));
+            }
+        }
+    }
+    
+    return Ok((0, status_code));
 }
 
 struct Config {
     ps1: String,
-    rsh_builtins: HashMap<String, fn() -> Result<(i32, i32), GeneralError>>
+    rsh_builtins: HashMap<String, fn(&Vec<String>) -> Result<(i32, i32), GeneralError>>
 }
 
 
@@ -48,11 +69,11 @@ fn load_config() -> Result<Config, GeneralError> {
     Ok(loc_config)
 }
 
-fn parse_command(s: &String) -> String {
-    s.split(" ")
+fn parse_command(s: &String) -> Vec<String> {
+    s.split(" ").map(|word| word.to_string()).collect()
 }
 
-fn main_loop(config: Config) {
+fn main_loop(config: Config) -> i32 {
     let mut should_continue = 1;
     let mut status = 0;
     
@@ -71,20 +92,30 @@ fn main_loop(config: Config) {
         let parsed_command = parse_command(&line);
         
         if config.rsh_builtins.get(&parsed_command[0]) != None {
-            (should_continue, status) = config.rsh_builtins.get(&line).unwrap()(&parsed_command[1..]).unwrap();
+            if parsed_command.len() > 1 {
+                (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec()).unwrap();
+            }
+
+            else {
+                let v: Vec<String> = Vec::new();
+                (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&v).unwrap();
+            }
         }
 
         else {
             
         }
     }
+
+    return status;
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     let cfg = load_config().unwrap();
     
     println!("hello world!");
-    main_loop(cfg);
+    let status = main_loop(cfg);
+    std::process::exit(status);
 
     
     let output = Command::new("ls").args(&["-l"]).output().unwrap();
