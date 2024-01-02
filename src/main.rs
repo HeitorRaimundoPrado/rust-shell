@@ -1,78 +1,10 @@
+mod builtins;
+mod config;
+
 use std::process::Command;
 use std::io::{self, Write};
-use std::error::Error;
-use std::collections::HashMap;
-use std::fmt;
-use std::os::unix::process;
-use std::os::unix::process::CommandExt;
-use std::env;
 
-fn cd_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
-    let help_msg = String::from("Usage:\n\ncd [new directory]\n");
-    if argv.len() != 1 {
-        println!("{}", help_msg);
-    }
-    
-    env::set_current_dir(&argv[0]).expect("Failed to change directory");
-    Ok((1, 0))
-}
-
-fn help_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
-    println!("Builtins:\n\nhelp - prints this help message\ncd - changes directory\nexit - exits the program with specified return code\n");
-    Ok((1, 0))
-}
-
-fn exit_builtin(argv: &Vec<String>) -> Result<(i32, i32), String> {
-    let help_msg = "Usage:\n\nexit [status code]\n";
-    if argv.len() > 1 {
-        println!("{}", help_msg);
-        return Ok((1, 1));
-    }
-    
-    let mut status_code = 0;
-
-    if argv.len() > 0 {
-        let parse_argv = argv[0].parse::<i32>();
-        match parse_argv {
-            Ok(parse_argv) => {
-                status_code = parse_argv;
-            },
-            
-            Err(e) => {
-                println!("{}", help_msg);
-                return Ok((1, 1));
-            }
-        }
-    }
-    
-    return Ok((0, status_code));
-}
-
-struct Config {
-    ps1: String,
-    rsh_builtins: HashMap<String, fn(&Vec<String>) -> Result<(i32, i32), String>>,
-    variables: HashMap<String, String>
-}
-
-
-fn load_config() -> Result<Config, String> {
-    let mut loc_config = Config {
-        ps1: String::from("> "),
-        rsh_builtins: HashMap::new(),
-        variables: HashMap::new()
-    };
-    
-    loc_config.rsh_builtins.insert(String::from("help"), help_builtin);
-    loc_config.rsh_builtins.insert(String::from("cd"), cd_builtin);
-    loc_config.rsh_builtins.insert(String::from("exit"), exit_builtin);
-
-    loc_config.variables.insert(String::from("?"), String::from("0"));
-    
-    
-    Ok(loc_config)
-}
-
-fn parse_command(s: &String, config: &Config) -> Vec<String> {
+fn parse_command(s: &String, config: &config::Config) -> Vec<String> {
     let mut split_string: Vec<String> = s.split(" ").map(|word| word.to_string()).collect();
     for s in split_string.iter_mut() {
         if s.starts_with('$') {
@@ -85,56 +17,91 @@ fn parse_command(s: &String, config: &Config) -> Vec<String> {
     split_string
 }
 
-fn main_loop(config: Config) -> i32 {
+fn print_prompt1(cfg: &config::Config) {
+    print!("{}", cfg.variables.get("PS1").unwrap());
+    io::stdout().flush().unwrap();
+}
+
+fn print_prompt2(cfg: &config::Config) {
+    print!("{}", cfg.variables.get("PS2").unwrap());
+    io::stdout().flush().unwrap();
+}
+
+fn read_command(cfg: &config::Config) -> String {
+    let mut line = String::new();
+    loop {
+        io::stdin().read_line(&mut line)
+            .expect("Failed to read_line");
+
+        line = line.trim().to_string();
+        
+        if line.chars().nth(line.len() - 1).unwrap() == '\\' {
+            print_prompt2(&cfg);
+            line.remove(line.len()- 1);
+        }
+        
+        else {
+            break;
+        }
+    } 
+
+    line
+}
+
+fn execute_command(cfg: &mut config::Config, parsed_command: Vec<String>) -> Result<(i32, i32), String> {
+    let mut should_continue: i32 = 1;
+    let status: i32;
+    
+    if cfg.rsh_builtins.get(&parsed_command[0]) != None {
+        (should_continue, status) = cfg.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec(), cfg).unwrap();
+    }
+
+    else {
+        let mut command = Command::new(&parsed_command[0]);
+        command.args(&parsed_command[1..]);
+        let child = command.spawn();
+        match child {
+            Ok(_) => {},
+            Err(ref e) => {
+                println!("Error: {}\n", e);
+            }
+                
+        };
+        
+        status = child.unwrap().wait().expect("Failed to wait child process to finish").code().unwrap();
+        cfg.variables.insert(String::from("?"), status.to_string());
+    }
+    
+    return Ok((should_continue, status));
+}
+
+fn main_loop(cfg: &mut config::Config) -> i32 {
     let mut should_continue = 1;
     let mut status = 0;
     
     while should_continue != 0 {
-        let mut line = String::new();
             
-        print!("{}", config.ps1);
-        io::stdout().flush().unwrap();
-        io::stdin().read_line(&mut line)
-            .expect("Failed to read line");
+        print_prompt1(&*cfg);
 
-
-        let line = String::from(line.trim_end());
+        let line = read_command(&*cfg);
         
-        if line.trim() == "" {
+        if line == "" {
             continue;
         }
         
-        let parsed_command = parse_command(&line, &config);
+        let parsed_command = parse_command(&line, &cfg);
         
-        if config.rsh_builtins.get(&parsed_command[0]) != None {
-            (should_continue, status) = config.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec()).unwrap();
-        }
-
-        else {
-            let mut command = Command::new(&parsed_command[0]);
-            command.args(&parsed_command[1..]);
-            let mut child = command.spawn();
-            match child {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("Error: {}\n", e);
-                    continue;
-                }
-                    
-            };
-            
-            status = child.unwrap().wait().expect("Failed to wait child process to finish").code().unwrap();
-        }
+        (should_continue, status) = execute_command(cfg, parsed_command).unwrap();
     }
 
     return status;
 }
 
 fn main() -> Result<(), String> {
-    let cfg = load_config().unwrap();
+    let mut cfg = config::load_config().unwrap();
     
     println!("hello world!");
-    let status = main_loop(cfg);
+    let status = main_loop(&mut cfg);
     
     std::process::exit(status);
 }
