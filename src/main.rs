@@ -1,21 +1,11 @@
 mod builtins;
 mod config;
+mod symbol_table;
+mod tree;
+mod parser;
 
 use std::process::Command;
 use std::io::{self, Write};
-
-fn parse_command(s: &String, config: &config::Config) -> Vec<String> {
-    let mut split_string: Vec<String> = s.split(" ").map(|word| word.to_string()).collect();
-    for s in split_string.iter_mut() {
-        if s.starts_with('$') {
-            let var_name = &s[1..];
-            let val = config.variables.get(var_name).unwrap();
-            *s = val.to_string();
-        }
-    }
-
-    split_string
-}
 
 fn print_prompt1(cfg: &config::Config) {
     print!("{}", cfg.variables.get("PS1").unwrap());
@@ -48,28 +38,32 @@ fn read_command(cfg: &config::Config) -> String {
     line
 }
 
-fn execute_command(cfg: &mut config::Config, parsed_command: Vec<String>) -> Result<(i32, i32), String> {
+fn execute_command(cfg: &mut config::Config, parsed_command: &Box<tree::TreeNode<Box<parser::Token>>>) -> Result<(i32, i32), String> {
     let mut should_continue: i32 = 1;
     let status: i32;
     
-    if cfg.rsh_builtins.get(&parsed_command[0]) != None {
-        (should_continue, status) = cfg.rsh_builtins.get(&parsed_command[0]).unwrap()(&parsed_command[1..].to_vec(), cfg).unwrap();
+    let simple_command: Vec<&String> = parsed_command.children.iter().map(|child| &*child.value.value).collect();
+    if cfg.rsh_builtins.get(simple_command[0]) != None {
+        let builtin = cfg.rsh_builtins.get(simple_command[0]).unwrap();
+        (should_continue, status) = builtin(&simple_command[1..].to_vec(), cfg).unwrap();
     }
 
     else {
-        let mut command = Command::new(&parsed_command[0]);
-        command.args(&parsed_command[1..]);
+        let mut command = Command::new(&simple_command[0]);
+        command.args(&simple_command[1..]);
         let child = command.spawn();
         match child {
             Ok(_) => {},
             Err(ref e) => {
                 println!("Error: {}\n", e);
+                return Ok((should_continue, 1));
             }
                 
         };
         
         status = child.unwrap().wait().expect("Failed to wait child process to finish").code().unwrap();
-        cfg.variables.insert(String::from("?"), status.to_string());
+        
+        symbol_table::set_env_var("?", &status.to_string(), cfg);
     }
     
     return Ok((should_continue, status));
@@ -81,17 +75,17 @@ fn main_loop(cfg: &mut config::Config) -> i32 {
     
     while should_continue != 0 {
             
-        print_prompt1(&*cfg);
+        print_prompt1(&cfg);
 
-        let line = read_command(&*cfg);
+        let mut line = read_command(&cfg);
         
         if line == "" {
             continue;
         }
         
-        let parsed_command = parse_command(&line, &cfg);
+        let parsed_command = parser::build_ast(&mut line, &cfg);
         
-        (should_continue, status) = execute_command(cfg, parsed_command).unwrap();
+        (should_continue, status) = execute_command(cfg, &parsed_command).unwrap();
     }
 
     return status;

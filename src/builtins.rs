@@ -1,7 +1,7 @@
 use std::env;
 use crate::config::Config;
 
-pub fn cd_builtin(argv: &Vec<String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn cd_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = String::from("Usage:\n\ncd [new directory]\n");
     if argv.len() != 1 {
         println!("{}", help_msg);
@@ -12,12 +12,12 @@ pub fn cd_builtin(argv: &Vec<String>, _config: &mut Config) -> Result<(i32, i32)
     Ok((1, 0))
 }
 
-pub fn help_builtin(_argv: &Vec<String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn help_builtin(_argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     println!("Builtins:\n\nhelp - prints this help message\ncd - changes directory\nexit - exits the program with specified return code\n");
     Ok((1, 0))
 }
 
-pub fn export_builtin(argv: &Vec<String>, mut config: &mut Config) -> Result<(i32, i32), String> {
+pub fn export_builtin(argv: &Vec<&String>, mut config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = String::from("Usage:\n\nexport [variable]=[value]\n");
     if argv.len() != 1 {
         println!("{}", help_msg);
@@ -35,7 +35,7 @@ pub fn export_builtin(argv: &Vec<String>, mut config: &mut Config) -> Result<(i3
     Ok((1, 0))
 }
 
-pub fn exit_builtin(argv: &Vec<String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn exit_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = "Usage:\n\nexit [status code]\n";
     if argv.len() > 1 {
         println!("{}", help_msg);
@@ -61,6 +61,7 @@ pub fn exit_builtin(argv: &Vec<String>, _config: &mut Config) -> Result<(i32, i3
     return Ok((0, status_code));
 }
 
-pub fn if_builtin(argv: &Vec<String>, config: &mut Config) -> Result<(i32, i32), String> {
+pub fn if_builtin(argv: &Vec<&String>, config: &mut Config) -> Result<(i32, i32), String> {
+    
     Ok((1, 0))
 }

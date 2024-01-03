@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use crate::builtins;
+use crate::symbol_table;
 
 pub struct Config {
-    pub rsh_builtins: HashMap<String, fn(&Vec<String>, &mut Config) -> Result<(i32, i32), String>>,
+    pub rsh_builtins: HashMap<String, fn(&Vec<&String>, &mut Config) -> Result<(i32, i32), String>>,
     pub variables: HashMap<String, String>,
 }
 
@@ -18,10 +19,7 @@ pub fn load_config() -> Result<Config, String> {
     loc_config.rsh_builtins.insert(String::from("export"), builtins::export_builtin);
     loc_config.rsh_builtins.insert(String::from("if"), builtins::if_builtin);
 
-    loc_config.variables.insert(String::from("?"), String::from("0"));
-    loc_config.variables.insert(String::from("PS1"), String::from("$ "));
-    loc_config.variables.insert(String::from("PS2"), String::from("> "));
-    
+    symbol_table::load_variables(&mut loc_config);
     
     Ok(loc_config)
 }
