@@ -1,8 +1,7 @@
 use std::env;
 use crate::config::Config;
-use crate::builtins;
 
-fn cd_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn cd_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = String::from("Usage:\n\ncd [new directory]\n");
     if argv.len() != 1 {
         println!("{}", help_msg);
@@ -13,12 +12,12 @@ fn cd_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), S
     Ok((1, 0))
 }
 
-fn help_builtin(_argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn help_builtin(_argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     println!("Builtins:\n\nhelp - prints this help message\ncd - changes directory\nexit - exits the program with specified return code\n");
     Ok((1, 0))
 }
 
-fn export_builtin(argv: &Vec<&String>, config: &mut Config) -> Result<(i32, i32), String> {
+pub fn export_builtin(argv: &Vec<&String>, config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = String::from("Usage:\n\nexport [variable]=[value]\n");
     if argv.len() != 1 {
         println!("{}", help_msg);
@@ -36,7 +35,7 @@ fn export_builtin(argv: &Vec<&String>, config: &mut Config) -> Result<(i32, i32)
     Ok((1, 0))
 }
 
-fn exit_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
+pub fn exit_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32), String> {
     let help_msg = "Usage:\n\nexit [status code]\n";
     if argv.len() > 1 {
         println!("{}", help_msg);
@@ -63,9 +62,8 @@ fn exit_builtin(argv: &Vec<&String>, _config: &mut Config) -> Result<(i32, i32),
 }
 
 pub fn load_builtins(cfg: &mut Config) {
-    cfg.rsh_builtins.insert(String::from("help"), builtins::help_builtin);
-    cfg.rsh_builtins.insert(String::from("cd"), builtins::cd_builtin);
-    cfg.rsh_builtins.insert(String::from("exit"), builtins::exit_builtin);
-    cfg.rsh_builtins.insert(String::from("export"), builtins::export_builtin);
+    cfg.rsh_builtins.insert(String::from("help"), help_builtin);
+    cfg.rsh_builtins.insert(String::from("cd"), cd_builtin);
+    cfg.rsh_builtins.insert(String::from("exit"), exit_builtin);
+    cfg.rsh_builtins.insert(String::from("export"), export_builtin);
 }
-    

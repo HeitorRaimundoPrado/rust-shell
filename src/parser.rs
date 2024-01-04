@@ -3,17 +3,18 @@ use crate::config;
 use regex::Regex;
 use crate::log;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenType {
     Word,
     Node,
     PipelineRedirect,
     OutputRedirect,
     OutputRedirectAppend,
+    QuotedStr,
     Subshell
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WordType {
     NotWord,
     Builtin,
@@ -22,7 +23,7 @@ pub enum WordType {
     General
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub t_type: TokenType,
     pub w_type: WordType,
@@ -94,7 +95,46 @@ fn split_simple_command(s: &String, cfg: &config::Config) -> Vec<String> {
     ret_vec
 }
 
-pub fn build_ast (command: &String, cfg: &config::Config) ->  Box<tree::TreeNode<Box<Token>>> {
+pub fn parse_quot_string(s: &str, cfg: &config::Config) -> Vec<tree::TreeNode<Box<Token>>> {
+    let re = vec![
+        Regex::new(r#"(?P<before>.*)\$\((?P<sub>.*)\)(?P<after>.*)"#).unwrap(),
+    ];
+
+    let mut children: Vec::<tree::TreeNode<Box<Token>>> = Vec::new();
+    
+    if re[0].is_match(s) {
+        let captures = re[0].captures(s).unwrap();
+        
+        let bef_str = captures.name("before").unwrap().as_str();
+        log::debug(cfg, format!("{}", bef_str).as_str());
+        children.extend(parse_quot_string(bef_str, cfg));
+        
+        let sub = captures.name("sub").unwrap().as_str().to_string();
+        let mut subtree = build_ast(&sub, cfg);
+        subtree.value.t_type = TokenType::Subshell;
+        children.push(*subtree);
+
+        let aft_str = captures.name("after").unwrap().as_str();
+        log::debug(cfg, format!("{}", aft_str).as_str());
+        children.extend(parse_quot_string(aft_str, cfg));
+        
+    }
+    
+    vec![
+        tree::TreeNode {
+        value: Box::new(Token {
+            t_type: TokenType::QuotedStr,
+            w_type: WordType::NotWord,
+            value: Box::new(s.to_string())
+        }),
+        
+        children
+        }
+    ]
+}
+
+pub fn build_ast (command: &String, cfg: &config::Config)
+    ->  Box<tree::TreeNode<Box<Token>>> {
     log::debug(cfg, format!("building ast for {}", command).as_str());
     
     let mut root = Box::new(tree::TreeNode {
@@ -107,14 +147,18 @@ pub fn build_ast (command: &String, cfg: &config::Config) ->  Box<tree::TreeNode
         // Pipeline
         Regex::new(r#"^(?P<left>.*)\|(?P<right>.*)$"#).unwrap(),
         
+        // Single-quoted or double quoted string
+        Regex::new(r#"^(?P<before>.*)["'](?P<str>.*)["'](?P<after>.*)$"#).unwrap(),
+        
         // $() or () syntax
-        Regex::new(r"^(?P<main>.*)\$\((?P<sub>.*)\)").unwrap(),
+        Regex::new(r"^(?P<before>.*)\$\((?P<sub>.*)\)(?P<after>.*)$").unwrap(),
     ];
     
 
     if regexp[0].is_match(command) {
         let left = build_ast(&regexp[0].captures(command).unwrap().name("left").unwrap().as_str().trim().to_string(), cfg);
         let right = build_ast(&regexp[0].captures(command).unwrap().name("right").unwrap().as_str().trim().to_string(), cfg);
+        
         root.children.push(*left);
         root.children.push(tree::TreeNode {
             value: Box::new(classify_token(&String::from("|"), cfg)),
@@ -125,15 +169,39 @@ pub fn build_ast (command: &String, cfg: &config::Config) ->  Box<tree::TreeNode
 
     else if regexp[1].is_match(command) {
         let captures = regexp[1].captures(command).unwrap();
-        if captures.name("main") != None && captures.name("main").unwrap().as_str().trim() != "" {
-            let main = build_ast(&captures.name("main").unwrap().as_str().trim().to_string(), cfg);
-            root.children.extend(main.children);
+       
+        let bef_str = captures.name("before").unwrap().as_str().trim().to_string();
+        let aft_str = captures.name("after").unwrap().as_str().trim().to_string();
+        
+        if bef_str != "" {
+            root.children.extend(build_ast(&bef_str, cfg).children);
+        }
+        
+        let quot_str = parse_quot_string(&captures.name("str").unwrap().as_str().trim().to_string(), cfg);
+        root.children.push(quot_str.get(0).unwrap().clone());
+
+        if aft_str != "" {
+            root.children.extend(build_ast(&aft_str, cfg).children);
+        }
+    }
+    
+    else if regexp[2].is_match(command) {
+        let captures = regexp[2].captures(command).unwrap();
+        
+        let bef_str = &captures.name("before").unwrap().as_str().trim().to_string();
+        
+        if bef_str != "" {
+            root.children.extend(build_ast(bef_str, cfg).children);
         }
         
         let mut subcommand = build_ast(&captures.name("sub").unwrap().as_str().trim().to_string(), cfg);
         subcommand.value.t_type = TokenType::Subshell;
-        
         root.children.push(*subcommand);
+
+        let aft_str = &captures.name("after").unwrap().as_str().trim().to_string();
+        if aft_str != "" {
+            root.children.extend(build_ast(aft_str, cfg).children);
+        }
     }
     
     else {

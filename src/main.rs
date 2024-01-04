@@ -42,8 +42,14 @@ fn read_command(cfg: &config::Config) -> String {
     line
 }
 
-fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode<Box<parser::Token>>) -> Result<(i32, i32), String> {
-    log::debug(cfg, format!("\nexecuting {:?}\n", parsed_command).as_str());
+fn execute_builtin(argv : &mut Vec<tree::TreeNode<Box<parser::Token>>>, cfg: &mut config::Config) -> Result<(i32, i32), String> {
+    let builtin = cfg.rsh_builtins.get(&*argv[0].value.value).unwrap();
+    Ok(builtin(&argv[1..].iter().map(|arg| &*arg.value.value).collect::<Vec<&String>>(), cfg).unwrap())
+}
+
+fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode<Box<parser::Token>>,  t_type: parser::TokenType) -> Result<(i32, i32), String> {
+    log::debug(cfg, format!("\nexecuting {:?}\n", parsed_command.children.iter().map(|child| &*child.value.value).collect::<Vec<&String>>()).as_str());
+    log::debug(cfg, format!("\nview into tree: {:?}\n", parsed_command).as_str());
     
     let mut should_continue: i32 = 1;
     let mut status: i32 = 0;
@@ -57,23 +63,27 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
     
     for child in compound_command.iter_mut() {
         (should_continue, status) = match child.value.t_type  {
-            parser::TokenType::Subshell => execute_command(cfg, child).unwrap(),
+            parser::TokenType::Subshell => execute_command(cfg, child, parser::TokenType::Subshell).unwrap(),
             parser::TokenType::OutputRedirect => todo!(),
             parser::TokenType::PipelineRedirect => todo!(),
             parser::TokenType::OutputRedirectAppend => todo!(),
             parser::TokenType::Word => continue,
-            parser::TokenType::Node => execute_command(cfg, child).unwrap()
+            parser::TokenType::QuotedStr => execute_command(cfg, child, parser::TokenType::QuotedStr).unwrap(),
+            parser::TokenType::Node => execute_command(cfg, child, parser::TokenType::Node).unwrap()
                 
         }
     }
     
     
+    if compound_command.len() < 1 {
+        return Ok((1, 0));
+    }
+    
     if matches!(compound_command[0].value.t_type, parser::TokenType::Word) {
         log::debug(cfg, format!("{:?}", compound_command.iter().map(|v| &*v.value.value).collect::<Vec<&String>>()).as_str());
         
         if matches!(compound_command[0].value.w_type, parser::WordType::Builtin) {
-            let builtin = cfg.rsh_builtins.get(&*compound_command[0].value.value).unwrap();
-            (should_continue, status) = builtin(&compound_command[1..].iter().map(|arg| &*arg.value.value).collect::<Vec<&String>>(), cfg).unwrap();
+            (should_continue, status) = execute_builtin(compound_command, cfg).unwrap();
         }
         
         else {
@@ -84,7 +94,10 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
             
             log::debug(cfg, format!("{:?}", parsed_command.value.t_type).as_str());
             
-            if matches!(parsed_command.value.t_type, parser::TokenType::Node) || matches!(parsed_command.value.t_type, parser::TokenType::Word) {
+            // parsed_command is either a simple Node, which is a vec of command and args
+            // or it is just a command which will be classified as a word
+            
+            if !matches!(t_type, parser::TokenType::QuotedStr) && (matches!(parsed_command.value.t_type, parser::TokenType::Node) || matches!(parsed_command.value.t_type, parser::TokenType::Word)) {
                 let child = command.spawn();
                 match child {
                     Ok(_) => {},
@@ -102,7 +115,7 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
                 let child = command.output().expect("Failed to execute subshell command");
                 parsed_command.value.value = Box::new(String::from_utf8_lossy(child.stdout.as_slice()).trim().to_string());
                 
-                println!("parsed_command.value.value = {}", parsed_command.value.value);
+                log::debug(cfg, format!("parsed_command.value.value = {}", parsed_command.value.value).as_str());
                 
                 status = child.status.code().unwrap();
             }
@@ -112,8 +125,13 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
     }
 
     
+    if matches!(t_type, parser::TokenType::QuotedStr) {
+        parsed_command.value.value = Box::new(String::from(parsed_command.children.iter().map(|child| child.value.value.to_string()).collect::<Vec<String>>().join("")));
+    }
+    
     return Ok((should_continue, status));
 }
+
 
 fn main_loop(cfg: &mut config::Config) -> i32 {
     let mut should_continue = 1;
@@ -131,7 +149,9 @@ fn main_loop(cfg: &mut config::Config) -> i32 {
         
         let mut parsed_command = parser::build_ast(&mut line, &cfg);
         
-        (should_continue, status) = execute_command(cfg, &mut parsed_command).unwrap();
+        (should_continue, status) = execute_command(cfg, &mut parsed_command, parser::TokenType::Node).unwrap();
+
+        log::debug(cfg, format!("\nafter changes in tree:\n\n{:?}\n", parsed_command).as_str());
     }
 
     return status;
