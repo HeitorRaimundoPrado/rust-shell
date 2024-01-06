@@ -13,7 +13,7 @@ pub enum LogLevel {
 }
 
 pub struct Config {
-    pub rsh_builtins: HashMap<String, fn(&Vec<&String>, &mut Config) -> Result<(i32, i32), String>>,
+    pub rsh_builtins: HashMap<String, fn(&Vec<&String>, &mut Config) -> Result<(i32, i32, i32), String>>,
     pub variables: HashMap<String, String>,
     pub functions: HashMap<String, String>,
     pub keywords: HashMap<String, fn(&Vec<&String>, &mut Config) -> Result<(i32, i32), String>>,

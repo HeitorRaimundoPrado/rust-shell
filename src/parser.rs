@@ -8,6 +8,8 @@ pub enum TokenType {
     Word,
     Node,
     PipelineRedirect,
+    PipelineSendOuput,
+    PipelineGetInput,
     OutputRedirect,
     OutputRedirectAppend,
     QuotedStr,
@@ -43,20 +45,19 @@ fn classify_token(s: &String, cfg: &config::Config) -> Token {
         ">>" => tok.t_type = TokenType::OutputRedirectAppend,
         &_ => tok.t_type = TokenType::Word
     }
-
+    
     let re = [
         // There are still nodes to parse
         Regex::new(r#"[|><'"$()\s]+"#).unwrap(),
     ];
 
-    if re[0].is_match(s) {
+    if re[0].is_match(s) && matches!(tok.t_type, TokenType::Word) {
         tok.t_type = TokenType::Node;
     }
+    
 
 
     // Otherwise it's a word
-     
-    
     if matches!(tok.t_type, TokenType::Word) {
         match s.as_str() {
             val if cfg.rsh_builtins.get(val) != None  => tok.w_type = WordType::Builtin,
@@ -156,15 +157,19 @@ pub fn build_ast (command: &String, cfg: &config::Config)
     
 
     if regexp[0].is_match(command) {
-        let left = build_ast(&regexp[0].captures(command).unwrap().name("left").unwrap().as_str().trim().to_string(), cfg);
-        let right = build_ast(&regexp[0].captures(command).unwrap().name("right").unwrap().as_str().trim().to_string(), cfg);
+        let mut left = build_ast(&regexp[0].captures(command).unwrap().name("left").unwrap().as_str().trim().to_string(), cfg);
+        left.value.t_type = TokenType::PipelineSendOuput;
         
-        root.children.push(*left);
+        let mut right = build_ast(&regexp[0].captures(command).unwrap().name("right").unwrap().as_str().trim().to_string(), cfg);
+        right.value.t_type = TokenType::PipelineGetInput;
+        
         root.children.push(tree::TreeNode {
             value: Box::new(classify_token(&String::from("|"), cfg)),
-            children: Vec::new()
+            children: Vec::from(vec![
+                *left,
+                *right
+            ])
         });
-        root.children.push(*right);
     }
 
     else if regexp[1].is_match(command) {

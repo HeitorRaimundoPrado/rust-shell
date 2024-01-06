@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2.151"
+nix = { version = "0.27.1", features = ["process", "fs"] }
 regex = "1.10.2"
