@@ -127,11 +127,11 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
             let mut command = command
                 .args(&compound_command[1..].iter().map(|v| &*v.value.value).collect::<Vec<&String>>());
 
-            if !(stdout == io::stdout().as_raw_fd()) {
+            if stdout != io::stdout().as_raw_fd() && !matches!(parsed_command.value.t_type, parser::TokenType::Subshell){
                 command = command.stdout(Stdio::from( unsafe {File::from_raw_fd(stdout) } ));
             }
 
-            if !(stdin == io::stdin().as_raw_fd()) {
+            if stdin != io::stdin().as_raw_fd() && !matches!(parsed_command.value.t_type, parser::TokenType::Subshell) {
                 command = command.stdin(Stdio::from(unsafe { File::from_raw_fd(stdin) } ));
             }
 
@@ -141,40 +141,30 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
             
             // parsed_command is either a simple Node, which is a vec of command and args
             // or it is just a single-word command which will be classified as a word
-            let mut child = command.spawn()
-                    .expect("Failed to execute command ");
+            
 
             
-            if !matches!(t_type, parser::TokenType::QuotedStr) && (matches!(parsed_command.value.t_type, parser::TokenType::Node) || matches!(parsed_command.value.t_type, parser::TokenType::Word)) {
-                // match child {
-                //     Ok(_) => {},
-                //     Err(ref e) => {
-                //         println!("Error: {}\n", e);
-                //         return Ok((should_continue, 1, stdout));
-                //     }
-                //         
-                // };
+            if !matches!(t_type, parser::TokenType::QuotedStr) &&
+                (matches!(parsed_command.value.t_type, parser::TokenType::Node) ||
+                 matches!(parsed_command.value.t_type, parser::TokenType::Word) || 
+                 matches!(parsed_command.value.t_type, parser::TokenType::PipelineGetInput) ||
+                 matches!(parsed_command.value.t_type, parser::TokenType::PipelineSendOuput)) {
+                    
+                let mut child = command.spawn()
+                    .expect("Failed to execute command ");
                 
-                // let mut child = child.unwrap();
-                
-                child.wait().unwrap();
-
-                if let Some(stdout_obj) = child.stdout.take() {
-                    child_stdout = stdout_obj.as_raw_fd();
-                }
-
-                if !matches!(t_type, parser::TokenType::PipelineRedirect) {
-                    log::debug(cfg, format!("waiting for child: {:?}", child).as_str());
-                }
+                status = child.wait().unwrap().code().unwrap();
             }
 
-            else if matches!(parsed_command.value.t_type, parser::TokenType::Subshell) ||
-                matches!(parsed_command.value.t_type, parser::TokenType::PipelineGetInput) ||
-                matches!(parsed_command.value.t_type, parser::TokenType::PipelineSendOuput) {
+            else if matches!(parsed_command.value.t_type, parser::TokenType::Subshell) {
+
                 
-                child.wait().unwrap();
+                let child_output = command.output().expect("Failed to retrieve output from command");
+                parsed_command.value.value = Box::new(String::from_utf8_lossy(child_output.stdout.as_slice()).trim().to_string());
+                
                 log::debug(cfg, format!("parsed_command.value.value = {}", parsed_command.value.value).as_str());
                 
+                status = child_output.status.code().unwrap();
             }
             
             symbol_table::set_env_var("?", &status.to_string(), cfg);
