@@ -11,8 +11,8 @@ use std::process::Command;
 use std::io::{self, Write};
 use std::env;
 use std::process::Stdio;
-use std::fs::File;
-use std::os::unix::io::{OwnedFd, AsRawFd, FromRawFd};
+use std::fs::{File, OpenOptions};
+use std::os::unix::io::{AsRawFd, FromRawFd};
 
 fn print_prompt1(cfg: &config::Config) {
     print!("{}", cfg.variables.get("PS1").unwrap());
@@ -76,8 +76,17 @@ fn execute_pipeline(cfg: &mut config::Config, pipeline: &mut Vec<tree::TreeNode<
     
     Ok((should_continue, status, stdout_ret))
 }
-    
 
+fn execute_out_redir(cfg: &mut config::Config, command: &mut tree::TreeNode<Box<parser::Token>>, stdin: i32) -> Result<(i32, i32, i32), String> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(command.children[1].value.value.as_str())
+        .unwrap();
+
+    let fd = file.as_raw_fd();
+    execute_command(cfg, &mut command.children[0], parser::TokenType::Node, stdin, fd)
+}
 
 fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode<Box<parser::Token>>, t_type: parser::TokenType, stdin: i32, stdout: i32) -> Result<(i32, i32, i32), String> {
     log::debug(cfg, format!("\nexecuting {:?}\n", parsed_command.children.iter().map(|child| &*child.value.value).collect::<Vec<&String>>()).as_str());
@@ -98,7 +107,7 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
     for child in compound_command.iter_mut() {
         (should_continue, status, child_stdout) = match child.value.t_type  {
             parser::TokenType::Subshell => execute_command(cfg, child, parser::TokenType::Subshell, stdin, stdout).unwrap(),
-            parser::TokenType::OutputRedirect => todo!(),
+            parser::TokenType::OutputRedirect => execute_out_redir(cfg, child, stdin).unwrap(),
             parser::TokenType::PipelineRedirect => execute_pipeline(cfg, &mut child.children, stdin, stdout).unwrap(),
             parser::TokenType::OutputRedirectAppend => todo!(),
             parser::TokenType::Word => continue,
