@@ -9,3 +9,9 @@ edition = "2021"
 libc = "0.2.151"
 nix = { version = "0.27.1", features = ["process", "fs"] }
 regex = "1.10.2"
+termion = "3.0.0"
+termios = "0.3.3"
+
+
+[build]
+rustc = ["-C", "link-args=-lncursesw"]

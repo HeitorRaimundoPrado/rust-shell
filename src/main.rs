@@ -8,11 +8,14 @@ mod args;
 mod log;
 
 use std::process::Command;
-use std::io::{self, Write};
+use std::io::{self, Write, Stdout};
 use std::env;
 use std::process::Stdio;
 use std::fs::{File, OpenOptions};
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use termion::raw::IntoRawMode;
+use termion::input::TermRead;
+use termion::{cursor, terminal_size};
 
 fn print_prompt1(cfg: &config::Config) {
     print!("{}", cfg.variables.get("PS1").unwrap());
@@ -24,10 +27,176 @@ fn print_prompt2(cfg: &config::Config) {
     io::stdout().flush().unwrap();
 }
 
-fn read_command(cfg: &config::Config) -> String {
+fn key_backspace(cfg: &config::Config, line: &mut String, cur_x: &mut u16, cur_y: &mut u16, ins_cur: &mut u32) {
+    if *ins_cur == 0 {
+        return;
+    }
+    
+    if *ins_cur == line.len() as u32 {
+        line.pop();
+    }
+
+    else {
+        line.remove(*ins_cur as usize - 1);
+    }
+    
+    let (terminal_cols, _terminal_lines) = terminal_size().unwrap();
+   
+    log::debug(cfg, format!("cur_x inside key_backspace: {}", *cur_x).as_str());
+    if *cur_x == 1 {
+        log::debug(cfg, "Hitting if condition inside key_backspace");
+        *cur_x = terminal_cols;
+        *cur_y -= 1;
+    }
+
+    else {
+        *cur_x -= 1;
+    }
+    *ins_cur -= 1;
+}
+
+fn key_left_arrow(cfg: &config::Config, cur_x: &mut u16, cur_y: &mut u16, ins_cur: &mut u32) {
+    log::debug(cfg, format!("(inside key_left_arrow) ins_cur: {}", ins_cur).as_str());
+
+    let (terminal_cols, _terminal_lines) = terminal_size().unwrap();
+    
+    if *cur_x == 1 {
+        *cur_x = terminal_cols + 1;
+        *cur_y -= 1;
+    }
+    
+    if *ins_cur > 0 {
+        *ins_cur = *ins_cur - 1;
+        *cur_x -= 1;
+    }
+}
+
+fn key_right_arrow(cfg: &config::Config, line: &String, cur_x: &mut u16, cur_y: &mut u16, ins_cur: &mut u32) {
+    log::debug(cfg, format!("(inside key_left_arrow) ins_cur: {}", ins_cur).as_str());
+    
+    if *ins_cur >= line.len() as u32 {
+        return;
+    }
+    
+    let (terminal_cols, _terminal_lines) = terminal_size().unwrap();
+    
+    if *cur_x == terminal_cols {
+        *cur_x = 0;
+        *cur_y += 1; 
+    }
+    
+    *ins_cur += 1 ;
+    *cur_x += 1;
+}
+
+fn read_raw(cfg: &config::Config) -> String {
+    let mut stdout = io::stdout().into_raw_mode().unwrap();
+    
     let mut line = String::new();
-    io::stdin().read_line(&mut line)
-        .expect("Failed to read_line");
+    
+    // represents where in the string the next character should be inserted
+    let mut insert_cur = 0;
+    
+    for c in io::stdin().keys() {
+        
+        let (mut cur_x, mut cur_y) = cursor::DetectCursorPos::cursor_pos(&mut stdout).unwrap();
+        
+        match c.unwrap() {
+            termion::event::Key::Char('\n') => break,
+            termion::event::Key::Char(ch) => {
+                let (terminal_cols, _terminal_lines) = terminal_size().unwrap();
+                
+                if (insert_cur as usize) < line.len() {
+                    line.insert(insert_cur as usize, ch);
+                }
+                
+                else {
+                    line.push(ch);
+                }
+
+                insert_cur += 1;
+                
+                if cur_x < terminal_cols {
+                    cur_x += 1;
+                }
+
+                else {
+                    cur_x = 0;
+                    cur_y += 1;
+                }
+            }, 
+            termion::event::Key::Up => todo!(),
+            termion::event::Key::End => todo!(),
+            termion::event::Key::Esc => continue,
+            termion::event::Key::Home => todo!(),
+            termion::event::Key::Right => key_right_arrow(cfg, &line, &mut cur_x, &mut cur_y, &mut insert_cur),
+            termion::event::Key::Down => todo!(),
+            termion::event::Key::Left => key_left_arrow(cfg, &mut cur_x, &mut cur_y, &mut insert_cur),
+            termion::event::Key::Delete => todo!(),
+            termion::event::Key::Null => panic!(),
+            termion::event::Key::Backspace => key_backspace(cfg, &mut line, &mut cur_x, &mut cur_y, &mut insert_cur),
+            termion::event::Key::PageUp => todo!(),
+            termion::event::Key::PageDown => todo!(),
+            termion::event::Key::BackTab => todo!(),
+            termion::event::Key::Insert => todo!(),
+            termion::event::Key::F(_) => unreachable!(),
+            termion::event::Key::Alt(_) => todo!(),
+            termion::event::Key::Ctrl(_) => todo!(),
+            _ => unreachable!()
+                
+        }
+
+        let (terminal_cols, terminal_lines) = terminal_size().unwrap();
+
+        log::debug(cfg, format!("terminal_cols: {}\nterminal_lines: {}\n", terminal_cols, terminal_lines).as_str());
+        log::debug(cfg, format!("line.len: {}\n", line.len()).as_str());
+        
+        
+        let prompt_len = cfg.variables.get("PS1").unwrap().len();
+        
+        let mut cols_to_erase = ((insert_cur as usize + prompt_len ) / terminal_cols as usize > 0) as usize;
+        if (insert_cur as usize + prompt_len) / terminal_cols as usize > 1 {
+            cols_to_erase += (insert_cur as usize + prompt_len) / terminal_cols as usize - 1;
+        }
+        
+        log::debug(cfg, format!("cur_y: {}\ncur_x: {}", cur_y, cur_x).as_str());
+        
+        // for i in 0..cols_to_erase {
+        //     log::debug(cfg, format!("erasing line {} from bottom to top", i).as_str());
+        //     write!(stdout, "{}", cursor::Goto(0, cur_y-i as u16)).unwrap();
+        //     write!(stdout, "{}", termion::clear::AfterCursor).unwrap();
+        // }
+        
+        
+        cur_y -= cols_to_erase as u16;
+        
+        write!(stdout, "{}", cursor::Goto((prompt_len + 1) as u16, cur_y)).unwrap();
+        write!(stdout, "{}", termion::clear::AfterCursor).unwrap();
+        write!(stdout, "{}", line).unwrap();
+        
+        if cols_to_erase > 0 {
+            cur_y += cols_to_erase as u16;
+        }
+        
+        log::debug(cfg, format!("prompt_len: {}", prompt_len).as_str());
+        log::debug(cfg, format!("if cond: {:?}", (line.len() + prompt_len) % terminal_cols as usize == 0).as_str());
+
+        if cur_y - 1 as u16 == terminal_lines && (line.len() + prompt_len) % terminal_cols as usize == 0 {
+            log::debug(cfg, "writting newline to stdout");
+            write!(stdout, "\n").unwrap();
+        }
+        
+        write!(stdout, "{}", cursor::Goto(cur_x, cur_y)).unwrap();
+        stdout.flush().unwrap();
+    }
+
+    write!(stdout, "\r\n").unwrap();
+    line
+}
+
+fn read_command(cfg: &config::Config) -> String {
+
+    let mut line = read_raw(cfg);
     
     line = line.trim().to_string();
     
@@ -42,8 +211,7 @@ fn read_command(cfg: &config::Config) -> String {
         
         print_prompt2(&cfg);
         
-        let mut ap_line = String::new();
-        io::stdin().read_line(&mut ap_line).expect("Failed to read_line");
+        let ap_line = read_raw(cfg);
             
         line.push_str(ap_line.as_str());
         
@@ -78,9 +246,24 @@ fn execute_pipeline(cfg: &mut config::Config, pipeline: &mut Vec<tree::TreeNode<
 }
 
 fn execute_out_redir(cfg: &mut config::Config, command: &mut tree::TreeNode<Box<parser::Token>>, stdin: i32) -> Result<(i32, i32, i32), String> {
+    // file needs to live until stdout redirection
+    // so that fd is still valid
+   
     let file = OpenOptions::new()
         .write(true)
         .create(true)
+        .open(command.children[1].value.value.as_str())
+        .unwrap();
+
+    let fd = file.as_raw_fd();
+    execute_command(cfg, &mut command.children[0], parser::TokenType::Node, stdin, fd)
+}
+
+fn execute_out_app(cfg: &mut config::Config, command: &mut tree::TreeNode<Box<parser::Token>>, stdin: i32) -> Result<(i32, i32, i32), String> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(true)
         .open(command.children[1].value.value.as_str())
         .unwrap();
 
@@ -109,7 +292,7 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
             parser::TokenType::Subshell => execute_command(cfg, child, parser::TokenType::Subshell, stdin, stdout).unwrap(),
             parser::TokenType::OutputRedirect => execute_out_redir(cfg, child, stdin).unwrap(),
             parser::TokenType::PipelineRedirect => execute_pipeline(cfg, &mut child.children, stdin, stdout).unwrap(),
-            parser::TokenType::OutputRedirectAppend => todo!(),
+            parser::TokenType::OutputRedirectAppend => execute_out_app(cfg, child, stdin).unwrap(),
             parser::TokenType::Word => continue,
             parser::TokenType::PipelineSendOuput => execute_command(cfg, child, parser::TokenType::PipelineSendOuput, stdin, stdout).unwrap(),
             parser::TokenType::PipelineGetInput => execute_command(cfg, child, parser::TokenType::PipelineGetInput, stdin, stdout).unwrap(),

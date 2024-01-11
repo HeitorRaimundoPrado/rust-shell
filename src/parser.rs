@@ -155,7 +155,10 @@ pub fn build_ast (command: &String, cfg: &config::Config)
         Regex::new(r"^(?P<before>.*)\$\((?P<sub>.*)\)(?P<after>.*)$").unwrap(),
 
         // Output redirect (>)
-        Regex::new(r"^(?P<before>.*)>(?P<after>.*)$").unwrap()
+        Regex::new(r"^(?P<before>.*)[^>]>[^>](?P<after>.*)$").unwrap(),
+
+        // Output append (>>)
+        Regex::new(r"^(?P<before>.*)>>(?P<after>.*)$").unwrap(),
     ];
     
 
@@ -232,6 +235,28 @@ pub fn build_ast (command: &String, cfg: &config::Config)
             value: Box::new(classify_token(&String::from(">"), cfg)),
             children: out_redir_tree
         });
+    }
+
+    else if regexp[4].is_match(command) {
+        let captures = regexp[4].captures(command).unwrap();
+
+        let bef_str = &captures.name("before").unwrap().as_str().trim().to_string();
+        let aft_str = &captures.name("after").unwrap().as_str().trim().to_string();
+
+        let mut out_redir_tree = Vec::new();
+
+        if bef_str != "" {
+            out_redir_tree.push(*build_ast(bef_str, cfg));
+        }
+
+        if aft_str != "" {
+            out_redir_tree.push(*build_ast(aft_str, cfg));
+        }
+
+        root.children.push(tree::TreeNode {
+            value: Box::new(classify_token(&String::from(">>"), cfg)),
+            children: out_redir_tree
+        })
     }
     
     else {
