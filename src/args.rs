@@ -1,13 +1,28 @@
 use crate::config;
+use std::fs::File;
+use std::io;
+use std::os::unix::io::AsRawFd;
 
 pub fn load_args(cfg: &mut config::Config, argv: Vec<String>) {
     let help_msg = "
-    
+    Usage: rust-shell [options] (script)
+
+    Options:
+        --log-level: One of
+            debug
+            info
+            warn
+            critical
     ";
     
     for (i, _val) in  argv.iter().enumerate() {
+        if argv[i].ends_with(".sh") || argv[i].ends_with(".rsh") && cfg.stdin_to_execute == io::stdin().as_raw_fd() {
+            cfg.stdin_to_execute = File::open(&argv[i]).unwrap().as_raw_fd();
+            continue;
+        }
+        
         if argv[i] == "--log-level" {
-            if argv.len() < i+1 {
+            if argv.len() < i+2 {
                 println!("{}", help_msg);
                 break;
             }

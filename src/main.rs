@@ -8,7 +8,7 @@ mod args;
 mod log;
 
 use std::process::Command;
-use std::io::{self, Write, Stdout};
+use std::io::{self, Write, BufRead};
 use std::env;
 use std::process::Stdio;
 use std::fs::{File, OpenOptions};
@@ -44,7 +44,6 @@ fn key_backspace(cfg: &config::Config, line: &mut String, cur_x: &mut u16, cur_y
    
     log::debug(cfg, format!("cur_x inside key_backspace: {}", *cur_x).as_str());
     if *cur_x == 1 {
-        log::debug(cfg, "Hitting if condition inside key_backspace");
         *cur_x = terminal_cols;
         *cur_y -= 1;
     }
@@ -53,6 +52,16 @@ fn key_backspace(cfg: &config::Config, line: &mut String, cur_x: &mut u16, cur_y
         *cur_x -= 1;
     }
     *ins_cur -= 1;
+}
+
+fn key_delete(line: &mut String, ins_cur: &mut u32) {
+    if *ins_cur as usize == line.len() {
+        return;
+    }
+    
+    else {
+        line.remove(*ins_cur as usize);
+    }
 }
 
 fn key_left_arrow(cfg: &config::Config, cur_x: &mut u16, cur_y: &mut u16, ins_cur: &mut u32) {
@@ -132,18 +141,23 @@ fn read_raw(cfg: &config::Config) -> String {
             termion::event::Key::Right => key_right_arrow(cfg, &line, &mut cur_x, &mut cur_y, &mut insert_cur),
             termion::event::Key::Down => todo!(),
             termion::event::Key::Left => key_left_arrow(cfg, &mut cur_x, &mut cur_y, &mut insert_cur),
-            termion::event::Key::Delete => todo!(),
+            termion::event::Key::Delete => key_delete(&mut line, &mut insert_cur),
             termion::event::Key::Null => panic!(),
             termion::event::Key::Backspace => key_backspace(cfg, &mut line, &mut cur_x, &mut cur_y, &mut insert_cur),
-            termion::event::Key::PageUp => todo!(),
-            termion::event::Key::PageDown => todo!(),
-            termion::event::Key::BackTab => todo!(),
-            termion::event::Key::Insert => todo!(),
-            termion::event::Key::F(_) => unreachable!(),
-            termion::event::Key::Alt(_) => todo!(),
-            termion::event::Key::Ctrl(_) => todo!(),
+            termion::event::Key::PageUp => continue,
+            termion::event::Key::PageDown => continue,
+            termion::event::Key::BackTab => continue,
+            termion::event::Key::Insert => continue,
+            termion::event::Key::F(_) => continue,
+            termion::event::Key::Alt(_) => continue,
+            termion::event::Key::Ctrl(seq) => {
+                if seq == 'c' {
+                    line = String::new();
+                    write!(stdout, "^C").unwrap();
+                    break;
+                }
+            },
             _ => unreachable!()
-                
         }
 
         let (terminal_cols, terminal_lines) = terminal_size().unwrap();
@@ -160,13 +174,6 @@ fn read_raw(cfg: &config::Config) -> String {
         }
         
         log::debug(cfg, format!("cur_y: {}\ncur_x: {}", cur_y, cur_x).as_str());
-        
-        // for i in 0..cols_to_erase {
-        //     log::debug(cfg, format!("erasing line {} from bottom to top", i).as_str());
-        //     write!(stdout, "{}", cursor::Goto(0, cur_y-i as u16)).unwrap();
-        //     write!(stdout, "{}", termion::clear::AfterCursor).unwrap();
-        // }
-        
         
         cur_y -= cols_to_erase as u16;
         
@@ -195,7 +202,6 @@ fn read_raw(cfg: &config::Config) -> String {
 }
 
 fn read_command(cfg: &config::Config) -> String {
-
     let mut line = read_raw(cfg);
     
     line = line.trim().to_string();
@@ -334,16 +340,23 @@ fn execute_command(cfg: &mut config::Config, parsed_command: &mut tree::TreeNode
             // parsed_command is either a simple Node, which is a vec of command and args
             // or it is just a single-word command which will be classified as a word
             
-
-            
             if !matches!(t_type, parser::TokenType::QuotedStr) &&
                 (matches!(parsed_command.value.t_type, parser::TokenType::Node) ||
                  matches!(parsed_command.value.t_type, parser::TokenType::Word) || 
                  matches!(parsed_command.value.t_type, parser::TokenType::PipelineGetInput) ||
                  matches!(parsed_command.value.t_type, parser::TokenType::PipelineSendOuput)) {
                     
-                let mut child = command.spawn()
-                    .expect("Failed to execute command ");
+                let child = command.spawn();
+
+                match child {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("Error: {}", e);
+                        return Ok((1, 127, stdout));
+                    }
+                };
+
+                let mut child = child.unwrap();
                 
                 status = child.wait().unwrap().code().unwrap();
             }
@@ -376,6 +389,24 @@ fn main_loop(cfg: &mut config::Config) -> i32 {
     let mut should_continue = 1;
     let mut status = 0;
     let mut _stdout = io::stdout().as_raw_fd();
+
+    if cfg.stdin_to_execute != io::stdin().as_raw_fd() {
+        let file = unsafe { File::from_raw_fd(cfg.stdin_to_execute) };
+        let reader = std::io::BufReader::new(file);
+        let mut lines = reader.lines();
+        
+        while let Some(line) = lines.next() {
+            let mut line = line.unwrap();
+
+            let mut parsed_command = parser::build_ast(&mut line, &cfg);
+
+            (should_continue, status, _stdout) = execute_command(cfg, &mut parsed_command, parser::TokenType::Node, cfg.stdin_to_execute, io::stdout().as_raw_fd()).unwrap();
+            
+            if should_continue != 1 {
+                return status;
+            }
+        }
+    }
     
     while should_continue != 0 {
             
